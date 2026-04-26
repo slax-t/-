@@ -93,9 +93,24 @@ function applyClauses(builder, clauses = []) {
     return q;
 }
 function wrapDoc(row, customRef) {
+    const normalized = { ...row };
+    if (normalized.session_id && !normalized.sessionId) normalized.sessionId = normalized.session_id;
+    if (normalized.is_mic_muted !== undefined && normalized.isMicMuted === undefined) normalized.isMicMuted = normalized.is_mic_muted;
+    if (normalized.message_type && !normalized.type) normalized.type = normalized.message_type;
+    if (normalized.username && !normalized.user) normalized.user = normalized.username;
+    if (normalized.content && !normalized.text) normalized.text = normalized.content;
+    if (normalized.voice_data && !normalized.voiceData) normalized.voiceData = normalized.voice_data;
+    if (normalized.voice_duration !== undefined && normalized.duration === undefined) normalized.duration = normalized.voice_duration;
+    if (normalized.from_session_id && normalized.signal_payload) {
+        normalized.senderSessionId = normalized.from_session_id;
+        normalized.senderUsername = normalized.signal_payload.senderUsername ?? normalized.from_session_id.slice(0, 8).toUpperCase();
+        if (normalized.signal_payload.offer) normalized.offer = normalized.signal_payload.offer;
+        if (normalized.signal_payload.answer) normalized.answer = normalized.signal_payload.answer;
+        if (normalized.signal_payload.candidate) normalized.candidate = normalized.signal_payload.candidate;
+    }
     return {
-        id: row.id ?? row.session_id ?? row.username,
-        data: () => row,
+        id: normalized.id ?? normalized.session_id ?? normalized.username,
+        data: () => normalized,
         ref: customRef ?? row
     };
 }
@@ -143,7 +158,13 @@ async function setDoc(docRef, payload) {
         return;
     }
     if (meta.table === 'voice_sessions') {
-        const record = { ...payload, channel: meta.channel, session_id: docRef.id };
+        const record = {
+            username: payload.username,
+            channel: meta.channel,
+            session_id: docRef.id,
+            is_mic_muted: Boolean(payload.isMicMuted),
+            joined_at: payload.joinedAt ?? serverTimestamp()
+        };
         try {
             await supabaseRequest('voice_sessions', {
                 method: 'POST',
@@ -187,14 +208,14 @@ async function updateDoc(docRef, payload) {
             await supabaseRequest('voice_sessions', {
                 method: 'PATCH',
                 filters: { channel: meta.channel, session_id: docRef.id },
-                body: payload,
+                body: { is_mic_muted: Boolean(payload.isMicMuted) },
                 prefer: 'return=representation'
             });
         } catch (error) {
             console.warn('Supabase voice update fallback to localStorage:', error.message);
             const rows = localReadTable('voice_sessions');
             const idx = rows.findIndex((row) => row.channel === meta.channel && row.session_id === docRef.id);
-            if (idx >= 0) rows[idx] = { ...rows[idx], ...payload };
+            if (idx >= 0) rows[idx] = { ...rows[idx], is_mic_muted: Boolean(payload.isMicMuted) };
             localWriteTable('voice_sessions', rows);
         }
         return;
@@ -205,9 +226,18 @@ async function addDoc(collectionRef, payload) {
     const meta = resolveCollectionMeta(collectionRef.path);
     if (meta.table === 'messages') {
         try {
+            const record = {
+                username: payload.user ?? currentUsername,
+                channel: payload.channel ?? currentChannel,
+                content: payload.text ?? '',
+                message_type: payload.type ?? 'text',
+                voice_data: payload.voiceData ?? null,
+                voice_duration: payload.duration ?? null,
+                timestamp: payload.timestamp ?? serverTimestamp()
+            };
             const data = await supabaseRequest('messages', {
                 method: 'POST',
-                body: [payload],
+                body: [record],
                 prefer: 'return=representation'
             });
             return wrapDoc(data?.[0] ?? {});
@@ -222,9 +252,20 @@ async function addDoc(collectionRef, payload) {
     }
     if (meta.table === 'voice_signals') {
         try {
+            const signalPayload = {
+                offer: payload.offer ?? null,
+                answer: payload.answer ?? null,
+                candidate: payload.candidate ?? null,
+                senderUsername: payload.senderUsername ?? null
+            };
             const data = await supabaseRequest('voice_signals', {
                 method: 'POST',
-                body: [{ ...payload, recipient_session_id: meta.recipient_session_id }],
+                body: [{
+                    recipient_session_id: meta.recipient_session_id,
+                    from_session_id: payload.senderSessionId,
+                    signal_type: payload.type ?? 'candidate',
+                    signal_payload: signalPayload
+                }],
                 prefer: 'return=representation'
             });
             return wrapDoc(data?.[0] ?? {});
@@ -432,6 +473,8 @@ const displayUid = document.getElementById('display-uid');
 const voiceStatusPanel = document.getElementById('voice-status-panel');
 const currentVoiceName = document.getElementById('current-voice-name');
 const micToggleButton = document.getElementById('mic-toggle-btn');
+const mobileVoiceControls = document.getElementById('mobile-voice-controls');
+const mobileMicToggleButton = document.getElementById('mobile-mic-toggle-btn');
 const screenToggleButton = document.getElementById('screen-toggle-btn');
 const notificationArea = document.getElementById('notification-area'); 
 const sidebar = document.getElementById('sidebar'); 
@@ -1260,7 +1303,6 @@ const signalingCollectionRef = (sessionId) => collection(db, 'artifacts', appId,
 window.handleVoiceAction = function(voiceId) {
     if (currentVoiceChannel === voiceId) leaveVoice();
     else joinVoice(voiceId);
-    if (isSidebarOpen && window.innerWidth < 768) toggleSidebar();
 };
 
 async function joinVoice(voiceId) {
@@ -1273,6 +1315,7 @@ async function joinVoice(voiceId) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
         micToggleButton.textContent = 'MIC: ON';
+        if (mobileMicToggleButton) mobileMicToggleButton.textContent = 'MIC: ON';
         isMicMuted = false;
         await setDoc(doc(voiceRef(voiceId), localSessionId), {
             username: currentUsername,
@@ -1283,6 +1326,7 @@ async function joinVoice(voiceId) {
         });
         subscribeToVoiceSession(voiceId);
         subscribeToSignaling();
+        refreshVoiceControlVisibility();
         addSystemMessage(`ГОЛОСОВОЙ УЗЕЛ ${voiceId.toUpperCase()} АКТИВЕН.`);
         playTone(400, 0.1);
         setTimeout(() => playTone(600, 0.2), 150);
@@ -1316,6 +1360,7 @@ window.leaveVoice = async function() {
     }
     currentVoiceChannel = null;
     voiceStatusPanel.classList.add('hidden');
+    refreshVoiceControlVisibility();
     addSystemMessage(`ГОЛОСОВОЙ УЗЕЛ ОТКЛЮЧЕН.`);
     playTone(300, 0.2);
 }
@@ -1634,12 +1679,21 @@ window.toggleMic = function() {
     isMicMuted = !isMicMuted;
     localStream.getAudioTracks().forEach(track => { track.enabled = !isMicMuted; });
     micToggleButton.textContent = isMicMuted ? 'MIC: OFF' : 'MIC: ON';
+    if (mobileMicToggleButton) mobileMicToggleButton.textContent = isMicMuted ? 'MIC: OFF' : 'MIC: ON';
     addSystemMessage(isMicMuted ? 'МИКРОФОН ВЫКЛЮЧЕН.' : 'МИКРОФОН ВКЛЮЧЕН.');
     playTone(1000, 0.05);
     if (currentVoiceChannel) {
         updateDoc(doc(voiceRef(currentVoiceChannel), localSessionId), { isMicMuted: isMicMuted });
     }
 }
+
+function refreshVoiceControlVisibility() {
+    if (!mobileVoiceControls) return;
+    if (window.innerWidth < 768 && currentVoiceChannel) mobileVoiceControls.classList.remove('hidden');
+    else mobileVoiceControls.classList.add('hidden');
+}
+
+window.addEventListener('resize', refreshVoiceControlVisibility);
 
 window.toggleScreenShare = function() {
     if (isSharingScreen) stopScreenShare();
@@ -1738,10 +1792,4 @@ function addSystemMessage(text, isError = false) {
 function initializeAdminSystem() { /* заглушка */ }
 
 // --- ЭКСПОРТ ГЛОБАЛЬНЫХ ФУНКЦИЙ ---
-window.toggleSidebar = toggleSidebar;
-window.handleVoiceAction = handleVoiceAction;
-window.leaveVoice = leaveVoice;
-window.toggleMic = toggleMic;
-window.toggleScreenShare = toggleScreenShare;
 window.playVoiceMessage = playVoiceMessage;
-window.removeMediaWindow = removeMediaWindow;

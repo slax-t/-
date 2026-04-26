@@ -1,5 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 const supabaseUrl =
     window.SLAX_SUPABASE_URL ??
     import.meta.env?.VITE_SUPABASE_URL ??
@@ -8,9 +6,44 @@ const supabaseKey =
     window.SLAX_SUPABASE_PUBLISHABLE_KEY ??
     import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY ??
     "sb_publishable_GpEKccLRvtua6-rbIJoaaw_HHwQblRR";
-const supabase = createClient(supabaseUrl, supabaseKey);
-const db = { supabase };
+const db = { supabaseUrl, supabaseKey };
 const appId = 'slax-console-v1'; 
+
+const supabaseBaseHeaders = {
+    apikey: supabaseKey,
+    Authorization: `Bearer ${supabaseKey}`
+};
+
+function buildRestUrl(table, filters = {}, options = {}) {
+    const params = new URLSearchParams();
+    params.set('select', options.select ?? '*');
+    for (const [field, value] of Object.entries(filters)) {
+        params.set(field, `eq.${String(value)}`);
+    }
+    if (typeof options.limit === 'number') params.set('limit', String(options.limit));
+    if (typeof options.order === 'string') params.set('order', options.order);
+    if (typeof options.on_conflict === 'string') params.set('on_conflict', options.on_conflict);
+    return `${supabaseUrl}/rest/v1/${table}?${params.toString()}`;
+}
+
+async function supabaseRequest(table, { method = 'GET', filters = {}, body, options = {}, prefer } = {}) {
+    const url = buildRestUrl(table, filters, options);
+    const headers = { ...supabaseBaseHeaders };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (prefer) headers['Prefer'] = prefer;
+    const response = await fetch(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const raw = await response.text();
+    const data = raw ? JSON.parse(raw) : null;
+    if (!response.ok) {
+        const message = data?.message ?? `Supabase REST error: ${response.status}`;
+        throw new Error(message);
+    }
+    return data;
+}
 
 function collection(_db, ...segments) {
     return { path: segments.join('/') };
@@ -39,10 +72,10 @@ function resolveCollectionMeta(path) {
     return { table: null };
 }
 function applyClauses(builder, clauses = []) {
-    let q = builder;
+    const q = { ...builder };
     for (const clause of clauses) {
-        if (clause.type === 'where' && clause.operator === '==') q = q.eq(clause.field, clause.value);
-        if (clause.type === 'limit') q = q.limit(clause.count);
+        if (clause.type === 'where' && clause.operator === '==') q.filters[clause.field] = clause.value;
+        if (clause.type === 'limit') q.limit = clause.count;
     }
     return q;
 }
@@ -56,28 +89,36 @@ function wrapDoc(row, customRef) {
 async function getDocs(queryRef) {
     const meta = resolveCollectionMeta(queryRef.path);
     if (!meta.table) return { empty: true, docs: [], forEach: () => {} };
-    let qb = supabase.from(meta.table).select('*');
-    if (meta.channel) qb = qb.eq('channel', meta.channel);
-    if (meta.recipient_session_id) qb = qb.eq('recipient_session_id', meta.recipient_session_id);
+    let qb = { filters: {} };
+    if (meta.channel) qb.filters.channel = meta.channel;
+    if (meta.recipient_session_id) qb.filters.recipient_session_id = meta.recipient_session_id;
     qb = applyClauses(qb, queryRef.clauses);
-    const { data = [], error } = await qb;
-    if (error) throw error;
+    const data = await supabaseRequest(meta.table, {
+        method: 'GET',
+        filters: qb.filters,
+        options: { limit: qb.limit }
+    }) ?? [];
     const docs = data.map((row) => wrapDoc(row));
     return { empty: docs.length === 0, docs, forEach: (fn) => docs.forEach(fn) };
 }
 async function setDoc(docRef, payload) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        const { error } = await supabase.from('app_users').upsert({ ...payload, username: docRef.id }, { onConflict: 'username' });
-        if (error) throw error;
+        await supabaseRequest('app_users', {
+            method: 'POST',
+            body: [{ ...payload, username: docRef.id }],
+            options: { select: '*', on_conflict: 'username' },
+            prefer: 'resolution=merge-duplicates,return=representation'
+        });
         return;
     }
     if (meta.table === 'voice_sessions') {
-        const { error } = await supabase.from('voice_sessions').upsert(
-            { ...payload, channel: meta.channel, session_id: docRef.id },
-            { onConflict: 'channel,session_id' }
-        );
-        if (error) throw error;
+        await supabaseRequest('voice_sessions', {
+            method: 'POST',
+            body: [{ ...payload, channel: meta.channel, session_id: docRef.id }],
+            options: { select: '*', on_conflict: 'channel,session_id' },
+            prefer: 'resolution=merge-duplicates,return=representation'
+        });
         return;
     }
     throw new Error(`Unsupported setDoc path: ${docRef.path}`);
@@ -85,13 +126,21 @@ async function setDoc(docRef, payload) {
 async function updateDoc(docRef, payload) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        const { error } = await supabase.from('app_users').update(payload).eq('username', docRef.id);
-        if (error) throw error;
+        await supabaseRequest('app_users', {
+            method: 'PATCH',
+            filters: { username: docRef.id },
+            body: payload,
+            prefer: 'return=representation'
+        });
         return;
     }
     if (meta.table === 'voice_sessions') {
-        const { error } = await supabase.from('voice_sessions').update(payload).eq('channel', meta.channel).eq('session_id', docRef.id);
-        if (error) throw error;
+        await supabaseRequest('voice_sessions', {
+            method: 'PATCH',
+            filters: { channel: meta.channel, session_id: docRef.id },
+            body: payload,
+            prefer: 'return=representation'
+        });
         return;
     }
     throw new Error(`Unsupported updateDoc path: ${docRef.path}`);
@@ -99,14 +148,20 @@ async function updateDoc(docRef, payload) {
 async function addDoc(collectionRef, payload) {
     const meta = resolveCollectionMeta(collectionRef.path);
     if (meta.table === 'messages') {
-        const { data, error } = await supabase.from('messages').insert(payload).select().single();
-        if (error) throw error;
-        return wrapDoc(data);
+        const data = await supabaseRequest('messages', {
+            method: 'POST',
+            body: [payload],
+            prefer: 'return=representation'
+        });
+        return wrapDoc(data?.[0] ?? {});
     }
     if (meta.table === 'voice_signals') {
-        const { data, error } = await supabase.from('voice_signals').insert({ ...payload, recipient_session_id: meta.recipient_session_id }).select().single();
-        if (error) throw error;
-        return wrapDoc(data);
+        const data = await supabaseRequest('voice_signals', {
+            method: 'POST',
+            body: [{ ...payload, recipient_session_id: meta.recipient_session_id }],
+            prefer: 'return=representation'
+        });
+        return wrapDoc(data?.[0] ?? {});
     }
     throw new Error(`Unsupported addDoc path: ${collectionRef.path}`);
 }
@@ -114,13 +169,17 @@ async function deleteDoc(docRef) {
     const baseRef = docRef.ref ?? docRef;
     const meta = resolveCollectionMeta(baseRef.path ?? '');
     if (meta.table === 'voice_sessions') {
-        const { error } = await supabase.from('voice_sessions').delete().eq('channel', meta.channel).eq('session_id', baseRef.id);
-        if (error) throw error;
+        await supabaseRequest('voice_sessions', {
+            method: 'DELETE',
+            filters: { channel: meta.channel, session_id: baseRef.id }
+        });
         return;
     }
     if (baseRef.table === 'voice_signals') {
-        const { error } = await supabase.from('voice_signals').delete().eq('id', baseRef.id);
-        if (error) throw error;
+        await supabaseRequest('voice_signals', {
+            method: 'DELETE',
+            filters: { id: baseRef.id }
+        });
         return;
     }
     throw new Error('Unsupported deleteDoc reference');
@@ -128,9 +187,13 @@ async function deleteDoc(docRef) {
 async function getDoc(docRef) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        const { data, error } = await supabase.from('app_users').select('*').eq('username', docRef.id).maybeSingle();
-        if (error) throw error;
-        return { exists: () => Boolean(data), data: () => data };
+        const data = await supabaseRequest('app_users', {
+            method: 'GET',
+            filters: { username: docRef.id },
+            options: { limit: 1 }
+        });
+        const row = data?.[0] ?? null;
+        return { exists: () => Boolean(row), data: () => row };
     }
     return { exists: () => false, data: () => null };
 }

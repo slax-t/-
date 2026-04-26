@@ -1,10 +1,8 @@
 const supabaseUrl =
     window.SLAX_SUPABASE_URL ??
-    import.meta.env?.VITE_SUPABASE_URL ??
     "https://dqhvecotzsvnzdfwozgb.supabase.co";
 const supabaseKey =
     window.SLAX_SUPABASE_PUBLISHABLE_KEY ??
-    import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY ??
     "sb_publishable_GpEKccLRvtua6-rbIJoaaw_HHwQblRR";
 const db = { supabaseUrl, supabaseKey };
 const appId = 'slax-console-v1'; 
@@ -44,6 +42,21 @@ async function supabaseRequest(table, { method = 'GET', filters = {}, body, opti
     }
     return data;
 }
+
+const localTableKey = (table) => `slax_local_${table}`;
+const localReadTable = (table) => {
+    try {
+        const raw = localStorage.getItem(localTableKey(table));
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+};
+const localWriteTable = (table, rows) => {
+    localStorage.setItem(localTableKey(table), JSON.stringify(rows));
+};
+const localMatchFilters = (row, filters = {}) =>
+    Object.entries(filters).every(([field, value]) => row[field] === value);
 
 function collection(_db, ...segments) {
     return { path: segments.join('/') };
@@ -93,32 +106,59 @@ async function getDocs(queryRef) {
     if (meta.channel) qb.filters.channel = meta.channel;
     if (meta.recipient_session_id) qb.filters.recipient_session_id = meta.recipient_session_id;
     qb = applyClauses(qb, queryRef.clauses);
-    const data = await supabaseRequest(meta.table, {
-        method: 'GET',
-        filters: qb.filters,
-        options: { limit: qb.limit }
-    }) ?? [];
+    let data = [];
+    try {
+        data = await supabaseRequest(meta.table, {
+            method: 'GET',
+            filters: qb.filters,
+            options: { limit: qb.limit }
+        }) ?? [];
+    } catch (error) {
+        console.warn('Supabase GET fallback to localStorage:', error.message);
+        data = localReadTable(meta.table).filter((row) => localMatchFilters(row, qb.filters));
+        if (typeof qb.limit === 'number') data = data.slice(0, qb.limit);
+    }
     const docs = data.map((row) => wrapDoc(row));
     return { empty: docs.length === 0, docs, forEach: (fn) => docs.forEach(fn) };
 }
 async function setDoc(docRef, payload) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        await supabaseRequest('app_users', {
-            method: 'POST',
-            body: [{ ...payload, username: docRef.id }],
-            options: { select: '*', on_conflict: 'username' },
-            prefer: 'resolution=merge-duplicates,return=representation'
-        });
+        const record = { ...payload, username: docRef.id };
+        try {
+            await supabaseRequest('app_users', {
+                method: 'POST',
+                body: [record],
+                options: { select: '*', on_conflict: 'username' },
+                prefer: 'resolution=merge-duplicates,return=representation'
+            });
+        } catch (error) {
+            console.warn('Supabase SET fallback to localStorage:', error.message);
+            const rows = localReadTable('app_users');
+            const idx = rows.findIndex((row) => row.username === docRef.id);
+            if (idx >= 0) rows[idx] = { ...rows[idx], ...record };
+            else rows.push(record);
+            localWriteTable('app_users', rows);
+        }
         return;
     }
     if (meta.table === 'voice_sessions') {
-        await supabaseRequest('voice_sessions', {
-            method: 'POST',
-            body: [{ ...payload, channel: meta.channel, session_id: docRef.id }],
-            options: { select: '*', on_conflict: 'channel,session_id' },
-            prefer: 'resolution=merge-duplicates,return=representation'
-        });
+        const record = { ...payload, channel: meta.channel, session_id: docRef.id };
+        try {
+            await supabaseRequest('voice_sessions', {
+                method: 'POST',
+                body: [record],
+                options: { select: '*', on_conflict: 'channel,session_id' },
+                prefer: 'resolution=merge-duplicates,return=representation'
+            });
+        } catch (error) {
+            console.warn('Supabase voice session fallback to localStorage:', error.message);
+            const rows = localReadTable('voice_sessions');
+            const idx = rows.findIndex((row) => row.channel === meta.channel && row.session_id === docRef.id);
+            if (idx >= 0) rows[idx] = { ...rows[idx], ...record };
+            else rows.push(record);
+            localWriteTable('voice_sessions', rows);
+        }
         return;
     }
     throw new Error(`Unsupported setDoc path: ${docRef.path}`);
@@ -126,21 +166,37 @@ async function setDoc(docRef, payload) {
 async function updateDoc(docRef, payload) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        await supabaseRequest('app_users', {
-            method: 'PATCH',
-            filters: { username: docRef.id },
-            body: payload,
-            prefer: 'return=representation'
-        });
+        try {
+            await supabaseRequest('app_users', {
+                method: 'PATCH',
+                filters: { username: docRef.id },
+                body: payload,
+                prefer: 'return=representation'
+            });
+        } catch (error) {
+            console.warn('Supabase UPDATE fallback to localStorage:', error.message);
+            const rows = localReadTable('app_users');
+            const idx = rows.findIndex((row) => row.username === docRef.id);
+            if (idx >= 0) rows[idx] = { ...rows[idx], ...payload };
+            localWriteTable('app_users', rows);
+        }
         return;
     }
     if (meta.table === 'voice_sessions') {
-        await supabaseRequest('voice_sessions', {
-            method: 'PATCH',
-            filters: { channel: meta.channel, session_id: docRef.id },
-            body: payload,
-            prefer: 'return=representation'
-        });
+        try {
+            await supabaseRequest('voice_sessions', {
+                method: 'PATCH',
+                filters: { channel: meta.channel, session_id: docRef.id },
+                body: payload,
+                prefer: 'return=representation'
+            });
+        } catch (error) {
+            console.warn('Supabase voice update fallback to localStorage:', error.message);
+            const rows = localReadTable('voice_sessions');
+            const idx = rows.findIndex((row) => row.channel === meta.channel && row.session_id === docRef.id);
+            if (idx >= 0) rows[idx] = { ...rows[idx], ...payload };
+            localWriteTable('voice_sessions', rows);
+        }
         return;
     }
     throw new Error(`Unsupported updateDoc path: ${docRef.path}`);
@@ -148,20 +204,38 @@ async function updateDoc(docRef, payload) {
 async function addDoc(collectionRef, payload) {
     const meta = resolveCollectionMeta(collectionRef.path);
     if (meta.table === 'messages') {
-        const data = await supabaseRequest('messages', {
-            method: 'POST',
-            body: [payload],
-            prefer: 'return=representation'
-        });
-        return wrapDoc(data?.[0] ?? {});
+        try {
+            const data = await supabaseRequest('messages', {
+                method: 'POST',
+                body: [payload],
+                prefer: 'return=representation'
+            });
+            return wrapDoc(data?.[0] ?? {});
+        } catch (error) {
+            console.warn('Supabase message insert fallback to localStorage:', error.message);
+            const rows = localReadTable('messages');
+            const record = { ...payload, id: Date.now() + Math.floor(Math.random() * 1000) };
+            rows.push(record);
+            localWriteTable('messages', rows);
+            return wrapDoc(record);
+        }
     }
     if (meta.table === 'voice_signals') {
-        const data = await supabaseRequest('voice_signals', {
-            method: 'POST',
-            body: [{ ...payload, recipient_session_id: meta.recipient_session_id }],
-            prefer: 'return=representation'
-        });
-        return wrapDoc(data?.[0] ?? {});
+        try {
+            const data = await supabaseRequest('voice_signals', {
+                method: 'POST',
+                body: [{ ...payload, recipient_session_id: meta.recipient_session_id }],
+                prefer: 'return=representation'
+            });
+            return wrapDoc(data?.[0] ?? {});
+        } catch (error) {
+            console.warn('Supabase signal insert fallback to localStorage:', error.message);
+            const rows = localReadTable('voice_signals');
+            const record = { ...payload, recipient_session_id: meta.recipient_session_id, id: Date.now() + Math.floor(Math.random() * 1000) };
+            rows.push(record);
+            localWriteTable('voice_signals', rows);
+            return wrapDoc(record);
+        }
     }
     throw new Error(`Unsupported addDoc path: ${collectionRef.path}`);
 }
@@ -169,17 +243,31 @@ async function deleteDoc(docRef) {
     const baseRef = docRef.ref ?? docRef;
     const meta = resolveCollectionMeta(baseRef.path ?? '');
     if (meta.table === 'voice_sessions') {
-        await supabaseRequest('voice_sessions', {
-            method: 'DELETE',
-            filters: { channel: meta.channel, session_id: baseRef.id }
-        });
+        try {
+            await supabaseRequest('voice_sessions', {
+                method: 'DELETE',
+                filters: { channel: meta.channel, session_id: baseRef.id }
+            });
+        } catch (error) {
+            console.warn('Supabase delete fallback to localStorage:', error.message);
+            const rows = localReadTable('voice_sessions').filter(
+                (row) => !(row.channel === meta.channel && row.session_id === baseRef.id)
+            );
+            localWriteTable('voice_sessions', rows);
+        }
         return;
     }
     if (baseRef.table === 'voice_signals') {
-        await supabaseRequest('voice_signals', {
-            method: 'DELETE',
-            filters: { id: baseRef.id }
-        });
+        try {
+            await supabaseRequest('voice_signals', {
+                method: 'DELETE',
+                filters: { id: baseRef.id }
+            });
+        } catch (error) {
+            console.warn('Supabase signal delete fallback to localStorage:', error.message);
+            const rows = localReadTable('voice_signals').filter((row) => row.id !== baseRef.id);
+            localWriteTable('voice_signals', rows);
+        }
         return;
     }
     throw new Error('Unsupported deleteDoc reference');
@@ -187,12 +275,18 @@ async function deleteDoc(docRef) {
 async function getDoc(docRef) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        const data = await supabaseRequest('app_users', {
-            method: 'GET',
-            filters: { username: docRef.id },
-            options: { limit: 1 }
-        });
-        const row = data?.[0] ?? null;
+        let row = null;
+        try {
+            const data = await supabaseRequest('app_users', {
+                method: 'GET',
+                filters: { username: docRef.id },
+                options: { limit: 1 }
+            });
+            row = data?.[0] ?? null;
+        } catch (error) {
+            console.warn('Supabase getDoc fallback to localStorage:', error.message);
+            row = localReadTable('app_users').find((user) => user.username === docRef.id) ?? null;
+        }
         return { exists: () => Boolean(row), data: () => row };
     }
     return { exists: () => false, data: () => null };

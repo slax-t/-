@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLAX_TERMINAL_V5</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="h-screen w-screen flex flex-col crt-flicker theme-green">
+    <div class="scanlines"></div>
+    <div id="floating-videos-container"></div>
+
+    <div id="login-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black z-40">
+        <pre class="text-xs sm:text-base leading-none mb-8 text-center text-green-500 font-bold">
+ ____  _        _    __  __
+/ ___|| |      / \   \ \/ /
+\___ \| |     / _ \   \  /
+ ___) | |___ / ___ \  /  \
+|____/|_____/_/   \_\/_/\_\
+     OPERATING SYSTEM v5.0
+        </pre>
+
+        <div class="w-11/12 max-w-md p-6 border-2 border-green-800 bg-black/90 shadow-[0_0_20px_rgba(0,255,0,0.2)]">
+            <p id="auth-mode-title" class="mb-2 text-green-400 font-bold text-center text-base sm:text-lg">>> LOG IN REQUIRED</p>
+            <div class="h-px w-full bg-green-900 mb-4"></div>
+
+            <div class="flex items-center mb-4 text-sm sm:text-base">
+                <span class="mr-3 whitespace-nowrap">USER:</span>
+                <input type="text" id="username-input" class="flex-1 border-b border-green-800 focus:border-green-500" placeholder="enter_callsign" autocomplete="off" maxlength="12">
+            </div>
+
+            <div class="flex items-center mb-4 text-sm sm:text-base">
+                <span class="mr-3 whitespace-nowrap">PASS:</span>
+                <input type="password" id="pin-input" class="flex-1 border-b border-green-800 focus:border-green-500" placeholder="enter_password_6_16_chars" autocomplete="off" maxlength="16">
+            </div>
+
+            <p id="login-error" class="text-red-500 mt-2 text-xs sm:text-sm text-center">>> ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ...</p>
+
+            <button id="auth-main-btn" class="mt-6 border border-green-600 px-4 py-2 hover:bg-green-600 hover:text-black transition-all w-full text-center font-bold tracking-widest text-sm sm:text-base">[ CONNECT ]</button>
+            <button id="auth-switch-btn" class="mt-3 text-xs opacity-70 hover:opacity-100 transition-opacity w-full text-center">[ SWITCH TO REGISTER ]</button>
+
+            <div class="mt-4 text-[10px] sm:text-xs text-center opacity-50">
+                SECURE CONNECTION: <span class="text-green-300">ENCRYPTED</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-interface" class="hidden flex-1 flex h-full relative">
+        <div id="sidebar-backdrop" onclick="toggleSidebar()" class="hidden md:hidden absolute inset-0 bg-black/50 z-20"></div>
+
+        <div id="sidebar" class="fixed w-64 md:w-72 h-full z-30 border-r-2 border-green-900 flex flex-col bg-black/95 -translate-x-full md:translate-x-0 transition-transform duration-300">
+            <div class="p-3 border-b-2 border-green-900 bg-[#051105]">
+                <div class="font-bold text-lg sm:text-xl tracking-wider">SLAX_OS</div>
+                <div class="text-xs opacity-70 flex justify-between mt-1"><span>NET: ONLINE</span><span>PING: 24ms</span></div>
+            </div>
+
+            <div class="p-4 flex-1 overflow-y-auto text-sm sm:text-base">
+                <div class="mb-8">
+                    <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">TEXT_PROTOCOLS</h3>
+                    <ul id="text-channels" class="space-y-1">
+                        <li onclick="switchChannel('main')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all channel-active" data-channel="main"># MAIN_HUB</li>
+                        <li onclick="switchChannel('offtopic')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="offtopic"># OFFTOPIC</li>
+                        <li onclick="switchChannel('dev')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="dev"># DEV_LOGS</li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">VOICE_UPLINKS</h3>
+                    <ul id="voice-channels" class="space-y-2">
+                        <li onclick="handleVoiceAction('lobby')" class="cursor-pointer border border-green-900/50 p-2 hover:border-green-500 transition-all group" data-voice="lobby">
+                            <div class="flex justify-between items-center">
+                                <span>LOBBY</span>
+                                <span class="voice-count text-[10px] bg-green-900 px-1 text-black group-hover:bg-green-500">1</span>
+                            </div>
+                            <div class="voice-users mt-1 pl-2 text-xs opacity-80 border-l border-green-800 ml-1"></div>
+                        </li>
+                    </ul>
+
+                    <div id="voice-status-panel" class="hidden mt-6 bg-green-900/10 border border-green-500 p-3">
+                        <div class="text-[10px] uppercase tracking-widest mb-1 opacity-70">Текущая Частота</div>
+                        <div id="current-voice-name" class="font-bold text-lg mb-2"></div>
+                        <div class="flex space-x-2 mb-3">
+                            <button id="mic-toggle-btn" onclick="toggleMic()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">MIC: ON</button>
+                            <button id="screen-toggle-btn" onclick="toggleScreenShare()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">SCREEN: OFF</button>
+                        </div>
+                        <button onclick="leaveVoice()" class="w-full bg-red-900/20 border border-red-800 text-red-500 hover:bg-red-900 hover:text-white transition-colors py-1 text-sm uppercase">[ ОТКЛЮЧИТЬ ]</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-3 border-t-2 border-green-900 text-sm bg-black">
+                <div class="flex items-center">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-2"></div>
+                    <div>
+                        <div id="display-username" class="font-bold tracking-wider">UNKNOWN</div>
+                        <div class="text-[10px] opacity-50 font-mono" id="display-uid">SID: ----</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="main-content-area" class="flex-1 flex flex-col relative bg-black md:ml-72 w-full">
+            <div class="h-14 border-b border-green-900 flex items-center px-4 md:px-6 justify-between bg-[#050905]">
+                <button onclick="toggleSidebar()" class="md:hidden text-green-400 text-lg mr-4">[ МЕНЮ ]</button>
+                <span id="channel-title" class="text-lg sm:text-xl font-bold tracking-widest">>> #MAIN_HUB</span>
+                <div class="flex items-center space-x-4 text-xs"><span class="hidden md:inline slax-loader opacity-50"></span><span class="border border-green-700 px-2 py-0.5">REC ●</span></div>
+            </div>
+
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 md:p-6 font-mono space-y-2 text-sm sm:text-base">
+                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: SLAX KERNEL INITIALIZED...</div>
+                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: CONNECTING TO SUPABASE NODE...</div>
+                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: WAITING FOR INPUT...</div>
+            </div>
+
+            <div id="notification-area"></div>
+
+            <div class="p-3 sm:p-4 bg-black border-t border-green-900">
+                <div class="flex items-center bg-green-900/10 border border-green-800 p-2 focus-within:border-green-500 transition-colors">
+                    <span class="mr-3 text-green-500 font-bold whitespace-nowrap text-sm sm:text-base">root@slax:~#</span>
+                    <input type="text" id="message-input" placeholder="execute_command..." autocomplete="off" class="text-sm sm:text-base">
+                </div>
+                <div class="text-[10px] opacity-30 mt-1 text-right">SLAX_MESSENGER v5.0 // DO NOT DISTRIBUTE</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./script.js"></script>
+</body>
+</html>

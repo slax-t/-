@@ -320,8 +320,8 @@ export default function App() {
   if (loading && !session) {
     return (
       <div className="h-screen w-screen bg-black flex items-center justify-center text-green-500 font-mono">
-        <div className="animate-pulse">>> INITIALIZING_SLAX_OS...</div>
-      </div>
+          <div className="animate-pulse">&gt;&gt; INITIALIZING_SLAX_OS...</div>   
+        </div>
     );
   }
 
@@ -342,8 +342,8 @@ export default function App() {
 
         <div className="w-11/12 max-w-md p-6 border-2 border-green-800 bg-black/90 shadow-[0_0_20px_rgba(0,255,0,0.2)] z-10">
           <p className="mb-2 text-green-400 font-bold text-center text-base sm:text-lg">
-            >> {authMode === "login" ? "LOG IN REQUIRED" : "REGISTER NEW USER"}
-          </p>
+              &gt;&gt; {authMode === "login" ? "LOG IN REQUIRED" : "REGISTER NEW USER"}
+            </p>
           <div className="h-px w-full bg-green-900 mb-4"></div>
 
           <form onSubmit={handleAuth} className="space-y-4">
@@ -383,7 +383,7 @@ export default function App() {
               />
             </div>
 
-            {authError && <p className="text-red-500 text-xs text-center">>> {authError}</p>}
+            {authError && <p className="text-red-500 text-xs text-center">&gt;&gt; {authError}</p>}
 
             <button
               type="submit"
@@ -453,8 +453,8 @@ export default function App() {
                   </div>
                   <div className="mt-1 pl-2 text-[10px] opacity-80 border-l border-green-800 ml-1">
                     {voiceUsers[ch]?.map(u => (
-                      <div key={u.id} className="truncate">>> {u.username} {u.isMicMuted ? '🔇' : ''}</div>
-                    ))}
+                        <div key={u.id} className="truncate">&gt;&gt; {u.username} {u.isMicMuted ? '🔇' : ''}</div>
+                      ))}
                   </div>
                 </li>
               ))}
@@ -483,10 +483,10 @@ export default function App() {
         {isSettingsOpen && (
           <div className="absolute inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
             <div className="w-full max-w-md border-2 border-green-500 bg-black p-6 shadow-[0_0_30px_rgba(0,255,0,0.2)]">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold tracking-widest text-green-400">>> SYSTEM_SETTINGS</h2>
-                <button onClick={() => setIsSettingsOpen(false)} className="text-green-500 hover:text-white">[ X ]</button>
-              </div>
+              <div className="flex justify-between items-center mb-6">    
+                  <h2 className="text-xl font-bold tracking-widest text-green-400">&gt;&gt; SYSTEM_SETTINGS</h2>
+                  <button onClick={() => setIsSettingsOpen(false)} className="text-green-500 hover:text-white">[ X ]</button>
+                </div>
               
               <div className="space-y-6">
                 <div>
@@ -518,9 +518,9 @@ export default function App() {
           </div>
         )}
         <header className="h-14 border-b border-green-900 flex items-center px-4 md:px-6 justify-between bg-[#050905]">
-          <button onClick={toggleSidebar} className="md:hidden text-green-400 text-lg mr-4">[ MENU ]</button>
-          <span className="text-lg sm:text-xl font-bold tracking-widest truncate">>> #{currentChannel.toUpperCase()}</span>
-          <div className="flex items-center space-x-4 text-xs">
+            <button onClick={toggleSidebar} className="md:hidden text-green-400 text-lg mr-4">[ MENU ]</button>
+            <span className="text-lg sm:text-xl font-bold tracking-widest truncate">&gt;&gt; #{currentChannel.toUpperCase()}</span>
+            <div className="flex items-center space-x-4 text-xs">
             <span className="hidden md:inline slax-loader opacity-50"></span>
             <span className="border border-green-700 px-2 py-0.5">REC ●</span>
           </div>

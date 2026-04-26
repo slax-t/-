@@ -1,7 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const supabaseUrl = window.SLAX_SUPABASE_URL ?? import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = window.SLAX_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabaseUrl =
+    window.SLAX_SUPABASE_URL ??
+    import.meta.env?.VITE_SUPABASE_URL ??
+    "https://dqhvecotzsvnzdfwozgb.supabase.co";
+const supabaseKey =
+    window.SLAX_SUPABASE_PUBLISHABLE_KEY ??
+    import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY ??
+    "sb_publishable_GpEKccLRvtua6-rbIJoaaw_HHwQblRR";
 const supabase = createClient(supabaseUrl, supabaseKey);
 const db = { supabase };
 const appId = 'slax-console-v1'; 

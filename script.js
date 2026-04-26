@@ -130,55 +130,101 @@ async function getDocs(queryRef) {
         }) ?? [];
     } catch (error) {
         console.warn('Supabase GET fallback to localStorage:', error.message);
-        data = localReadTable(meta.table).filter((row) => localMatchFilters(row, qb.filters));
-        if (typeof qb.limit === 'number') data = data.slice(0, qb.limit);
     }
+    const localData = localReadTable(meta.table).filter((row) => localMatchFilters(row, qb.filters));
+    if (meta.table === 'messages') {
+        const merged = [...data, ...localData];
+        const seen = new Set();
+        data = merged.filter((row) => {
+            const key = String(row.id ?? `${row.user ?? row.username}-${row.text ?? row.content}-${row.timestamp ?? ''}`);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        data.sort((a, b) => String(a.timestamp ?? '').localeCompare(String(b.timestamp ?? '')));
+    } else if (!data.length) {
+        data = localData;
+    }
+    if (typeof qb.limit === 'number') data = data.slice(0, qb.limit);
     const docs = data.map((row) => wrapDoc(row));
     return { empty: docs.length === 0, docs, forEach: (fn) => docs.forEach(fn) };
 }
 async function setDoc(docRef, payload) {
     const meta = resolveCollectionMeta(docRef.path);
     if (meta.table === 'app_users') {
-        const record = { ...payload, username: docRef.id };
+        const baseRecord = {
+            username: docRef.id,
+            password: payload.password,
+            settings: payload.settings ?? {},
+            plugins: payload.plugins ?? {}
+        };
         try {
             await supabaseRequest('app_users', {
                 method: 'POST',
-                body: [record],
+                body: [{ ...baseRecord, created_at: payload.createdAt ?? serverTimestamp() }],
                 options: { select: '*', on_conflict: 'username' },
                 prefer: 'resolution=merge-duplicates,return=representation'
             });
         } catch (error) {
-            console.warn('Supabase SET fallback to localStorage:', error.message);
-            const rows = localReadTable('app_users');
-            const idx = rows.findIndex((row) => row.username === docRef.id);
-            if (idx >= 0) rows[idx] = { ...rows[idx], ...record };
-            else rows.push(record);
-            localWriteTable('app_users', rows);
+            try {
+                await supabaseRequest('app_users', {
+                    method: 'POST',
+                    body: [{ ...baseRecord, createdAt: payload.createdAt ?? serverTimestamp() }],
+                    options: { select: '*', on_conflict: 'username' },
+                    prefer: 'resolution=merge-duplicates,return=representation'
+                });
+            } catch (fallbackError) {
+                console.warn('Supabase SET fallback to localStorage:', fallbackError.message);
+                const rows = localReadTable('app_users');
+                const idx = rows.findIndex((row) => row.username === docRef.id);
+                if (idx >= 0) rows[idx] = { ...rows[idx], ...baseRecord };
+                else rows.push(baseRecord);
+                localWriteTable('app_users', rows);
+            }
         }
         return;
     }
     if (meta.table === 'voice_sessions') {
-        const record = {
+        const recordSnake = {
             username: payload.username,
             channel: meta.channel,
             session_id: docRef.id,
             is_mic_muted: Boolean(payload.isMicMuted),
             joined_at: payload.joinedAt ?? serverTimestamp()
         };
+        const recordCamel = {
+            username: payload.username,
+            channel: meta.channel,
+            sessionId: docRef.id,
+            isMicMuted: Boolean(payload.isMicMuted),
+            joinedAt: payload.joinedAt ?? serverTimestamp()
+        };
         try {
             await supabaseRequest('voice_sessions', {
                 method: 'POST',
-                body: [record],
+                body: [recordSnake],
                 options: { select: '*', on_conflict: 'channel,session_id' },
                 prefer: 'resolution=merge-duplicates,return=representation'
             });
         } catch (error) {
-            console.warn('Supabase voice session fallback to localStorage:', error.message);
-            const rows = localReadTable('voice_sessions');
-            const idx = rows.findIndex((row) => row.channel === meta.channel && row.session_id === docRef.id);
-            if (idx >= 0) rows[idx] = { ...rows[idx], ...record };
-            else rows.push(record);
-            localWriteTable('voice_sessions', rows);
+            try {
+                await supabaseRequest('voice_sessions', {
+                    method: 'POST',
+                    body: [recordCamel],
+                    options: { select: '*', on_conflict: 'channel,sessionId' },
+                    prefer: 'resolution=merge-duplicates,return=representation'
+                });
+            } catch (fallbackError) {
+                console.warn('Supabase voice session fallback to localStorage:', fallbackError.message);
+                const rows = localReadTable('voice_sessions');
+                const idx = rows.findIndex((row) =>
+                    row.channel === meta.channel &&
+                    (row.session_id === docRef.id || row.sessionId === docRef.id)
+                );
+                if (idx >= 0) rows[idx] = { ...rows[idx], ...recordSnake };
+                else rows.push(recordSnake);
+                localWriteTable('voice_sessions', rows);
+            }
         }
         return;
     }
@@ -212,11 +258,23 @@ async function updateDoc(docRef, payload) {
                 prefer: 'return=representation'
             });
         } catch (error) {
-            console.warn('Supabase voice update fallback to localStorage:', error.message);
-            const rows = localReadTable('voice_sessions');
-            const idx = rows.findIndex((row) => row.channel === meta.channel && row.session_id === docRef.id);
-            if (idx >= 0) rows[idx] = { ...rows[idx], is_mic_muted: Boolean(payload.isMicMuted) };
-            localWriteTable('voice_sessions', rows);
+            try {
+                await supabaseRequest('voice_sessions', {
+                    method: 'PATCH',
+                    filters: { channel: meta.channel, sessionId: docRef.id },
+                    body: { isMicMuted: Boolean(payload.isMicMuted) },
+                    prefer: 'return=representation'
+                });
+            } catch (fallbackError) {
+                console.warn('Supabase voice update fallback to localStorage:', fallbackError.message);
+                const rows = localReadTable('voice_sessions');
+                const idx = rows.findIndex((row) =>
+                    row.channel === meta.channel &&
+                    (row.session_id === docRef.id || row.sessionId === docRef.id)
+                );
+                if (idx >= 0) rows[idx] = { ...rows[idx], is_mic_muted: Boolean(payload.isMicMuted), isMicMuted: Boolean(payload.isMicMuted) };
+                localWriteTable('voice_sessions', rows);
+            }
         }
         return;
     }
@@ -225,57 +283,100 @@ async function updateDoc(docRef, payload) {
 async function addDoc(collectionRef, payload) {
     const meta = resolveCollectionMeta(collectionRef.path);
     if (meta.table === 'messages') {
+        const recordSnake = {
+            username: payload.user ?? currentUsername,
+            channel: payload.channel ?? currentChannel,
+            content: payload.text ?? '',
+            message_type: payload.type ?? 'text',
+            voice_data: payload.voiceData ?? null,
+            voice_duration: payload.duration ?? null,
+            timestamp: payload.timestamp ?? serverTimestamp()
+        };
+        const recordCamel = {
+            user: payload.user ?? currentUsername,
+            channel: payload.channel ?? currentChannel,
+            text: payload.text ?? '',
+            type: payload.type ?? 'text',
+            voiceData: payload.voiceData ?? null,
+            duration: payload.duration ?? null,
+            timestamp: payload.timestamp ?? serverTimestamp()
+        };
         try {
-            const record = {
-                username: payload.user ?? currentUsername,
-                channel: payload.channel ?? currentChannel,
-                content: payload.text ?? '',
-                message_type: payload.type ?? 'text',
-                voice_data: payload.voiceData ?? null,
-                voice_duration: payload.duration ?? null,
-                timestamp: payload.timestamp ?? serverTimestamp()
-            };
             const data = await supabaseRequest('messages', {
                 method: 'POST',
-                body: [record],
+                body: [recordSnake],
                 prefer: 'return=representation'
             });
+            const rows = localReadTable('messages');
+            rows.push({ ...recordSnake, ...(data?.[0] ?? {}) });
+            localWriteTable('messages', rows);
             return wrapDoc(data?.[0] ?? {});
         } catch (error) {
-            console.warn('Supabase message insert fallback to localStorage:', error.message);
-            const rows = localReadTable('messages');
-            const record = { ...payload, id: Date.now() + Math.floor(Math.random() * 1000) };
-            rows.push(record);
-            localWriteTable('messages', rows);
-            return wrapDoc(record);
+            try {
+                const data = await supabaseRequest('messages', {
+                    method: 'POST',
+                    body: [recordCamel],
+                    prefer: 'return=representation'
+                });
+                const rows = localReadTable('messages');
+                rows.push({ ...recordCamel, ...(data?.[0] ?? {}) });
+                localWriteTable('messages', rows);
+                return wrapDoc(data?.[0] ?? {});
+            } catch (fallbackError) {
+                console.warn('Supabase message insert fallback to localStorage:', fallbackError.message);
+                const rows = localReadTable('messages');
+                const record = { ...recordCamel, id: Date.now() + Math.floor(Math.random() * 1000) };
+                rows.push(record);
+                localWriteTable('messages', rows);
+                return wrapDoc(record);
+            }
         }
     }
     if (meta.table === 'voice_signals') {
+        const signalPayload = {
+            offer: payload.offer ?? null,
+            answer: payload.answer ?? null,
+            candidate: payload.candidate ?? null,
+            senderUsername: payload.senderUsername ?? null
+        };
+        const recordSnake = {
+            recipient_session_id: meta.recipient_session_id,
+            from_session_id: payload.senderSessionId,
+            signal_type: payload.type ?? 'candidate',
+            signal_payload: signalPayload
+        };
+        const recordCamel = {
+            recipientSessionId: meta.recipient_session_id,
+            senderSessionId: payload.senderSessionId,
+            type: payload.type ?? 'candidate',
+            offer: payload.offer ?? null,
+            answer: payload.answer ?? null,
+            candidate: payload.candidate ?? null,
+            senderUsername: payload.senderUsername ?? null
+        };
         try {
-            const signalPayload = {
-                offer: payload.offer ?? null,
-                answer: payload.answer ?? null,
-                candidate: payload.candidate ?? null,
-                senderUsername: payload.senderUsername ?? null
-            };
             const data = await supabaseRequest('voice_signals', {
                 method: 'POST',
-                body: [{
-                    recipient_session_id: meta.recipient_session_id,
-                    from_session_id: payload.senderSessionId,
-                    signal_type: payload.type ?? 'candidate',
-                    signal_payload: signalPayload
-                }],
+                body: [recordSnake],
                 prefer: 'return=representation'
             });
             return wrapDoc(data?.[0] ?? {});
         } catch (error) {
-            console.warn('Supabase signal insert fallback to localStorage:', error.message);
-            const rows = localReadTable('voice_signals');
-            const record = { ...payload, recipient_session_id: meta.recipient_session_id, id: Date.now() + Math.floor(Math.random() * 1000) };
-            rows.push(record);
-            localWriteTable('voice_signals', rows);
-            return wrapDoc(record);
+            try {
+                const data = await supabaseRequest('voice_signals', {
+                    method: 'POST',
+                    body: [recordCamel],
+                    prefer: 'return=representation'
+                });
+                return wrapDoc(data?.[0] ?? {});
+            } catch (fallbackError) {
+                console.warn('Supabase signal insert fallback to localStorage:', fallbackError.message);
+                const rows = localReadTable('voice_signals');
+                const record = { ...recordSnake, ...recordCamel, id: Date.now() + Math.floor(Math.random() * 1000) };
+                rows.push(record);
+                localWriteTable('voice_signals', rows);
+                return wrapDoc(record);
+            }
         }
     }
     throw new Error(`Unsupported addDoc path: ${collectionRef.path}`);
